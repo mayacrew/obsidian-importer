@@ -60,6 +60,19 @@ export async function readToMarkdown(info: NotionResolverInfo, file: ZipEntryFil
 
 	let frontMatter: FrontMatterCache = {};
 
+	// Extract page icon (emoji) to frontmatter
+	const iconSpan = dom.find('div.page-header-icon span.icon');
+	if (iconSpan?.textContent?.trim()) {
+		frontMatter['icon'] = iconSpan.textContent.trim();
+	}
+
+	// Extract page cover image to frontmatter
+	const coverImg = dom.find('img.page-cover-image') as HTMLImageElement | null;
+	if (coverImg) {
+		const src = coverImg.getAttribute('src') ?? '';
+		if (src) frontMatter['cover'] = src;
+	}
+
 	const rawProperties = dom.find('table[class=properties] > tbody') as HTMLTableSectionElement | undefined;
 	if (rawProperties) {
 		const propertyLinks = getNotionLinks(info, rawProperties);
@@ -88,10 +101,13 @@ export async function readToMarkdown(info: NotionResolverInfo, file: ZipEntryFil
 	removeNotionIcons(body);
 	fixFormatTags(body, ['strong', 'em', 'mark', 'del']);
 	fixNotionBookmarks(body);
+	fixNotionEmbeds(body);
+	fixImageCaptions(body);
 	// fixEquations must come before fixNotionCallouts
 	fixEquations(body);
 	stripLinkFormatting(body);
 	fixNotionCallouts(body);
+	fixNotionColumns(body);
 	encodeNewlinesToBr(body);
 	fixNotionDates(body);
 
@@ -107,6 +123,7 @@ export async function readToMarkdown(info: NotionResolverInfo, file: ZipEntryFil
 
 	addCheckboxes(body);
 	formatTableOfContents(body);
+	fixNotionMentions(body);
 	formatDatabases(body);
 
 	let markdownBody = htmlToMarkdown(body.innerHTML);
@@ -204,7 +221,13 @@ function parseProperty(property: HTMLTableRowElement): YamlProperty | undefined 
 			for (let i = 0; i < children.length; i++) {
 				const itemContent = children.item(i)?.textContent;
 				if (!itemContent) continue;
-				childList.push(itemContent);
+				// Wrap relation items in wiki-links for Obsidian/Dataview compatibility
+				if (notionType === 'relation') {
+					childList.push(`[[${itemContent}]]`);
+				}
+				else {
+					childList.push(itemContent);
+				}
 			}
 			content = childList;
 			if (content.length === 0) return;
@@ -440,10 +463,110 @@ function fixNotionBookmarks(body: HTMLElement) {
 	}
 }
 
+/** Convert Notion column layouts to Obsidian callout-based columns */
+function fixNotionColumns(body: HTMLElement) {
+	const dom = body.ownerDocument;
+	for (const columnList of body.findAll('div.column-list')) {
+		const columns = columnList.findAll('div.column');
+		if (columns.length === 0) continue;
+
+		const container = dom.createElement('div');
+		for (const col of columns) {
+			const bq = dom.createElement('blockquote');
+			const header = dom.createElement('p');
+			header.innerHTML = '[!col]';
+			bq.appendChild(header);
+
+			const inner = col.find('div[style*="display:contents"]');
+			const source = inner || col;
+			bq.append(...Array.from(source.childNodes));
+			container.appendChild(bq);
+		}
+		columnList.replaceWith(container);
+	}
+}
+
+/** Convert Notion user mentions to Obsidian wiki-links */
+function fixNotionMentions(body: HTMLElement) {
+	for (const user of body.findAll('span.user')) {
+		const username = user.textContent?.trim() ?? '';
+		if (username) {
+			const link = body.ownerDocument.createElement('span');
+			link.setText(`[[${username}]]`);
+			user.replaceWith(link);
+		}
+	}
+}
+
+/** Convert Notion embeds (YouTube, etc.) to markdown links or iframes */
+function fixNotionEmbeds(body: HTMLElement) {
+	// Notion exports embeds as <figure> with <a> or <iframe>
+	for (const figure of body.findAll('figure')) {
+		// Skip already-handled elements (equations, callouts, bookmarks)
+		if (figure.hasClass('equation') || figure.hasClass('callout') || figure.find('a.bookmark')) continue;
+
+		const iframe = figure.find('iframe') as HTMLIFrameElement | null;
+		if (iframe) {
+			const src = iframe.getAttribute('src') ?? '';
+			if (src) {
+				// YouTube: convert to clickable link
+				const ytMatch = src.match(/youtube\.com\/embed\/([^?]+)/);
+				if (ytMatch) {
+					figure.replaceWith(`[YouTube](https://www.youtube.com/watch?v=${ytMatch[1]})`);
+					continue;
+				}
+				// Other iframes: convert to link
+				figure.replaceWith(`[Embed](${src})`);
+				continue;
+			}
+		}
+
+		// Figure with just a link (Notion's default embed export)
+		const link = figure.find('a') as HTMLAnchorElement | null;
+		if (link && !figure.find('img')) {
+			const href = link.getAttribute('href') ?? '';
+			const text = link.textContent?.trim() ?? href;
+			if (href) {
+				figure.replaceWith(`[${text}](${href})`);
+			}
+		}
+	}
+}
+
+/** Associate figcaption text as image alt text */
+function fixImageCaptions(body: HTMLElement) {
+	for (const fig of body.findAll('figure.image, figure')) {
+		const img = fig.find('img');
+		const caption = fig.find('figcaption');
+		if (img && caption) {
+			const alt = caption.textContent?.trim() ?? '';
+			if (alt) {
+				img.setAttribute('alt', alt);
+			}
+			caption.remove();
+		}
+	}
+}
+
 function formatDatabases(body: HTMLElement) {
-	// Notion includes user SVGs which aren't relevant to Markdown, so change them to pure text.
+	// Mentions already converted by fixNotionMentions, handle any remaining user spans
 	for (const user of body.findAll('span[class=user]')) {
 		user.innerText = user.textContent ?? '';
+	}
+
+	// Remove property icons from inline database table headers
+	for (const icon of body.findAll('span.icon.property-icon')) {
+		icon.remove();
+	}
+
+	// Convert cell-title links to wiki-links in inline databases
+	for (const cell of body.findAll('td.cell-title a')) {
+		const text = cell.textContent?.trim() ?? '';
+		if (text) {
+			const wikiLink = body.ownerDocument.createElement('span');
+			wikiLink.setText(`[[${text}]]`);
+			cell.replaceWith(wikiLink);
+		}
 	}
 
 	for (const checkbox of body.findAll('td div[class*=checkbox]')) {

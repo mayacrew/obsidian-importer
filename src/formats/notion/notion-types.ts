@@ -125,7 +125,8 @@ export class NotionResolverInfo {
 				// Remove ID from folder name if present (format: "FolderName <id>")
 				return segment.replace(/\s+[a-z0-9]{32}$/, '').trim();
 			})
-			.filter((seg) => seg.length > 0)
+			// Filter out pure UUID-only folder names (32 hex chars with no readable name)
+			.filter((seg) => seg.length > 0 && !/^[a-z0-9]{32}$/.test(seg))
 			// Folder names can't end in a dot or a space
 			.map((folder) => folder.replace(/[\. ]+$/, ''))
 			.join('/');
