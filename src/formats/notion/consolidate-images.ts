@@ -72,35 +72,49 @@ export async function consolidateImages(
 		let modified = false;
 
 		for (const { full, filename, width } of matches) {
-			const srcPath = attachmentFolderPath
-				? `${attachmentFolderPath}/${filename}`
-				: filename;
+			// Try multiple locations for the image
+			const mdDir = md.parent?.path ?? '';
+			const possiblePaths = [
+				`${mdDir}/${filename}`,
+				attachmentFolderPath ? `${attachmentFolderPath}/${filename}` : null,
+				filename,
+			].filter(Boolean) as string[];
 
-			const destPath = `${imagesFolderPath}/${filename}`;
-
-			// Try to copy file to images folder
-			try {
-				const srcFile = vault.getAbstractFileByPath(srcPath);
-				if (srcFile && srcFile instanceof TFile) {
-					const data = await vault.readBinary(srcFile as TFile);
-					// Check if already exists
-					if (!(await vault.adapter.exists(destPath))) {
-						await vault.createBinary(destPath, data);
-					}
-					consolidated++;
-
-					// Rewrite embed
-					const altText = filename.replace(/\.[^.]+$/, '');
-					const relPath = `../notion-images/${filename}`;
-					const replacement = width
-						? `<img src="${relPath}" width="${width}" />`
-						: `![${altText}](${relPath})`;
-
-					newText = newText.replace(full, replacement);
-					modified = true;
-				} else {
-					skipped++;
+			let srcFile: TFile | null = null;
+			for (const path of possiblePaths) {
+				const file = vault.getAbstractFileByPath(path);
+				if (file && file instanceof TFile) {
+					srcFile = file;
+					break;
 				}
+			}
+
+			if (!srcFile) {
+				skipped++;
+				continue;
+			}
+
+			try {
+				const data = await vault.readBinary(srcFile);
+				const destPath = `${imagesFolderPath}/${filename}`;
+
+				// Check if already exists
+				if (!(await vault.adapter.exists(destPath))) {
+					await vault.createBinary(destPath, data);
+				}
+				consolidated++;
+
+				// Rewrite embed - compute relative path from MD's directory to notion-images
+				const mdDirDepth = (mdDir.match(/\//g) || []).length;
+				const upDirs = '../'.repeat(mdDirDepth + 1);
+				const altText = filename.replace(/\.[^.]+$/, '');
+				const relPath = `${upDirs}notion-images/${filename}`;
+				const replacement = width
+					? `<img src="${relPath}" width="${width}" />`
+					: `![${altText}](${relPath})`;
+
+				newText = newText.replace(full, replacement);
+				modified = true;
 			} catch {
 				skipped++;
 			}
