@@ -9,21 +9,14 @@ import { readToMarkdown } from './notion/convert-to-md';
 import { NotionResolverInfo } from './notion/notion-types';
 import { getNotionId } from './notion/notion-utils';
 import { parseFileInfo } from './notion/parse-info';
-import { S3Config, uploadImagesToS3 } from './notion/s3-images';
+import { consolidateImages } from './notion/s3-images';
 
 export class NotionImporter extends FormatImporter {
 
 
 	parentsInSubfolders: boolean;
 	singleLineBreaks: boolean;
-	s3Enabled: boolean;
-	s3Config: S3Config = {
-		bucket: 'mayacrew-vault-assets',
-		region: 'ap-northeast-2',
-		keyPrefix: 'attachments/',
-		accessKey: '',
-		secretKey: '',
-	};
+	consolidateImages: boolean;
 
 	init() {
 		this.parentsInSubfolders = true;
@@ -45,52 +38,14 @@ export class NotionImporter extends FormatImporter {
 					this.singleLineBreaks = value;
 				}));
 
-		// S3 image upload settings
 		new Setting(this.modal.contentEl)
-			.setName('Upload images to S3')
-			.setDesc('After import, upload local images to S3 and replace wiki-embeds with S3 URLs.')
+			.setName('Consolidate images locally')
+			.setDesc('After import, move all images to a "notion-images" folder.')
 			.addToggle((toggle) => toggle
-				.setValue(this.s3Enabled)
+				.setValue(this.consolidateImages)
 				.onChange((value) => {
-					this.s3Enabled = value;
-					s3DetailsEl.style.display = value ? '' : 'none';
+					this.consolidateImages = value;
 				}));
-
-		const s3DetailsEl = this.modal.contentEl.createDiv();
-		s3DetailsEl.style.display = 'none';
-
-		new Setting(s3DetailsEl)
-			.setName('S3 Bucket')
-			.addText((text) => text
-				.setValue(this.s3Config.bucket)
-				.onChange((value) => (this.s3Config.bucket = value)));
-
-		new Setting(s3DetailsEl)
-			.setName('S3 Region')
-			.addText((text) => text
-				.setValue(this.s3Config.region)
-				.onChange((value) => (this.s3Config.region = value)));
-
-		new Setting(s3DetailsEl)
-			.setName('S3 Key Prefix')
-			.setDesc('e.g. "attachments/" — trailing slash required')
-			.addText((text) => text
-				.setValue(this.s3Config.keyPrefix)
-				.onChange((value) => (this.s3Config.keyPrefix = value)));
-
-		new Setting(s3DetailsEl)
-			.setName('AWS Access Key')
-			.addText((text) => text
-				.setValue(this.s3Config.accessKey)
-				.onChange((value) => (this.s3Config.accessKey = value)));
-
-		new Setting(s3DetailsEl)
-			.setName('AWS Secret Key')
-			.addText((text) => {
-				text.inputEl.type = 'password';
-				text.setValue(this.s3Config.secretKey)
-					.onChange((value) => (this.s3Config.secretKey = value));
-			});
 	}
 
 	async import(ctx: ImportContext): Promise<void> {
@@ -218,15 +173,15 @@ export class NotionImporter extends FormatImporter {
 			}
 		});
 
-		// Post-import: upload images to S3
-		if (this.s3Enabled && !ctx.isCancelled()) {
-			ctx.status('Uploading images to S3...');
+		// Post-import: consolidate images to notion-images folder
+		if (this.consolidateImages && !ctx.isCancelled()) {
+			ctx.status('Consolidating images...');
 			const attachmentFolderPath = vault.getConfig('attachmentFolderPath') ?? '';
-			const { uploaded, failed } = await uploadImagesToS3(
-				vault, ctx, targetFolderPath, attachmentFolderPath, this.s3Config
+			const { consolidated, skipped } = await consolidateImages(
+				vault, ctx, targetFolderPath, attachmentFolderPath
 			);
-			if (uploaded > 0 || failed > 0) {
-				new Notice(`S3 upload complete: ${uploaded} succeeded, ${failed} failed`);
+			if (consolidated > 0 || skipped > 0) {
+				new Notice(`Image consolidation complete: ${consolidated} consolidated, ${skipped} skipped`);
 			}
 		}
 	}

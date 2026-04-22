@@ -1,0 +1,7 @@
+{
+  "tool_name": "Read",
+  "tool_input_preview": "{\"file_path\":\"/Users/kimjunghwan/Workspace/obsidian-importer\"}",
+  "error": "EISDIR: illegal operation on a directory, read '/Users/kimjunghwan/Workspace/obsidian-importer'",
+  "timestamp": "2026-04-16T05:42:51.484Z",
+  "retry_count": 1
+}

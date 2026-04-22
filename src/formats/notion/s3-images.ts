@@ -1,15 +1,14 @@
 /**
- * S3 image upload & embed conversion for Notion imports.
+ * Post-import image consolidation.
  *
- * After the main HTML→MD import, scans imported files for local image
- * wiki-embeds and uploads them to S3:
- *   ![[image.png]]        → ![image](https://s3-url/image.png)
- *   ![[image.png|120]]    → <img src="https://s3-url/image.png" width="120" />
+ * After HTML→MD import, scans for local image wiki-embeds and
+ * consolidates them into a dedicated "notion-images" folder:
+ *   ![[image.png]]        → ![image](../notion-images/image.png)
+ *   ![[image.png|120]]    → <img src="../notion-images/image.png" width="120" />
  */
 
-import { requestUrl, Vault } from 'obsidian';
+import { Vault, TFile } from 'obsidian';
 import { ImportContext } from '../../main';
-import { buildS3PutHeaders, s3Url } from './aws-v4';
 
 const IMAGE_EXTS_RE = /\.(png|jpg|jpeg|gif|webp|heic|svg|bmp)$/i;
 
@@ -17,105 +16,25 @@ const IMAGE_EXTS_RE = /\.(png|jpg|jpeg|gif|webp|heic|svg|bmp)$/i;
 const EMBED_RE =
 	/!\[\[([^\]|]+\.(?:png|jpg|jpeg|gif|webp|heic|svg|bmp))(?:\|(\d+))?\]\]/gi;
 
-const CONTENT_TYPE: Record<string, string> = {
-	png: 'image/png',
-	jpg: 'image/jpeg',
-	jpeg: 'image/jpeg',
-	gif: 'image/gif',
-	webp: 'image/webp',
-	heic: 'image/heic',
-	svg: 'image/svg+xml',
-	bmp: 'image/bmp',
-};
-
-export interface S3Config {
-	bucket: string;
-	region: string;
-	keyPrefix: string;
-	accessKey: string;
-	secretKey: string;
-}
-
-/** Per-run cache: filename → final S3 URL */
-const uploadCache = new Map<string, string>();
-
-async function uploadToS3(
-	vault: Vault,
-	localPath: string,
-	filename: string,
-	config: S3Config,
-): Promise<string | null> {
-	if (uploadCache.has(filename)) return uploadCache.get(filename)!;
-
-	const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-	const contentType = CONTENT_TYPE[ext] ?? 'application/octet-stream';
-
-	let body: ArrayBuffer;
-	try {
-		body = await vault.adapter.readBinary(localPath);
-	}
-	catch {
-		return null;
-	}
-
-	const s3Key = `${config.keyPrefix}${filename}`;
-	const url = s3Url(config.bucket, config.region, s3Key);
-
-	// HEAD check — skip upload if already on S3
-	try {
-		const head = await requestUrl({ url, method: 'HEAD', throw: false });
-		if (head.status === 200) {
-			uploadCache.set(filename, url);
-			return url;
-		}
-	}
-	catch {
-		// Ignore — fall through to PUT
-	}
-
-	// PUT with V4 signed headers
-	try {
-		const headers = await buildS3PutHeaders({
-			bucket: config.bucket,
-			region: config.region,
-			key: s3Key,
-			body,
-			contentType,
-			accessKey: config.accessKey,
-			secretKey: config.secretKey,
-		});
-
-		const resp = await requestUrl({ url, method: 'PUT', body, headers });
-		if (resp.status === 200 || resp.status === 204) {
-			uploadCache.set(filename, url);
-			return url;
-		}
-		return null;
-	}
-	catch {
-		return null;
-	}
-}
-
 /**
- * Post-import step: scan all MD files under targetFolder for wiki-image
- * embeds, upload to S3, and rewrite links.
+ * Post-import step: scan MD files, consolidate images into
+ * "notion-images" folder, and rewrite wiki-embed links.
  */
-export async function uploadImagesToS3(
+export async function consolidateImages(
 	vault: Vault,
 	ctx: ImportContext,
 	targetFolderPath: string,
 	attachmentFolderPath: string,
-	config: S3Config,
-): Promise<{ uploaded: number; failed: number }> {
-	uploadCache.clear();
+): Promise<{ consolidated: number; skipped: number }> {
+	const imagesFolderPath = 'notion-images';
+	let consolidated = 0;
+	let skipped = 0;
 
-	if (!config.accessKey || !config.secretKey || !config.bucket || !config.region) {
-		return { uploaded: 0, failed: 0 };
+	// Ensure images folder exists
+	const imagesFolder = vault.getAbstractFileByPath(imagesFolderPath);
+	if (!imagesFolder) {
+		await vault.createFolder(imagesFolderPath);
 	}
-
-	let uploaded = 0;
-	let failed = 0;
 
 	const mdFiles = vault.getFiles().filter(
 		(f) => f.extension === 'md' && f.path.startsWith(targetFolderPath)
@@ -128,14 +47,13 @@ export async function uploadImagesToS3(
 		if (ctx.isCancelled()) break;
 
 		current++;
-		ctx.status(`Uploading images to S3 (${current}/${total}): ${md.name}`);
+		ctx.status(`Consolidating images (${current}/${total}): ${md.name}`);
 		ctx.reportProgress(current, total);
 
 		let text: string;
 		try {
 			text = await vault.cachedRead(md);
-		}
-		catch {
+		} catch {
 			continue;
 		}
 
@@ -154,25 +72,38 @@ export async function uploadImagesToS3(
 		let modified = false;
 
 		for (const { full, filename, width } of matches) {
-			// Try common attachment paths
-			const localPath = attachmentFolderPath
+			const srcPath = attachmentFolderPath
 				? `${attachmentFolderPath}/${filename}`
 				: filename;
 
-			const finalUrl = await uploadToS3(vault, localPath, filename, config);
-			if (!finalUrl) {
-				failed++;
-				continue;
+			const destPath = `${imagesFolderPath}/${filename}`;
+
+			// Try to copy file to images folder
+			try {
+				const srcFile = vault.getAbstractFileByPath(srcPath);
+				if (srcFile && srcFile instanceof TFile) {
+					const data = await vault.readBinary(srcFile as TFile);
+					// Check if already exists
+					if (!(await vault.adapter.exists(destPath))) {
+						await vault.createBinary(destPath, data);
+					}
+					consolidated++;
+
+					// Rewrite embed
+					const altText = filename.replace(/\.[^.]+$/, '');
+					const relPath = `../notion-images/${filename}`;
+					const replacement = width
+						? `<img src="${relPath}" width="${width}" />`
+						: `![${altText}](${relPath})`;
+
+					newText = newText.replace(full, replacement);
+					modified = true;
+				} else {
+					skipped++;
+				}
+			} catch {
+				skipped++;
 			}
-			uploaded++;
-
-			const altText = filename.replace(/\.[^.]+$/, '');
-			const replacement = width
-				? `<img src="${finalUrl}" width="${width}" />`
-				: `![${altText}](${finalUrl})`;
-
-			newText = newText.replace(full, replacement);
-			modified = true;
 		}
 
 		if (modified) {
@@ -180,5 +111,5 @@ export async function uploadImagesToS3(
 		}
 	}
 
-	return { uploaded, failed };
+	return { consolidated, skipped };
 }

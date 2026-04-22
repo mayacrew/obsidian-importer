@@ -1,0 +1,191 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776317668718,
+  "projectRoot": "/Users/kimjunghwan/Workspace/obsidian-importer",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "esbuild",
+        "version": "0.25.4",
+        "category": "build"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": null,
+    "lintCommand": "npm run lint",
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "node esbuild.config.mjs",
+      "build": "tsc -skipLibCheck && node esbuild.config.mjs production",
+      "version": "node version-bump.mjs && git add manifest.json package.json versions.json",
+      "lint": "eslint src --fix"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase/PascalCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": true,
+    "workspaces": [],
+    "mainDirectories": [
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "master",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "images": {
+      "path": "images",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1776317668695,
+      "keyFiles": [
+        "notion-export-settings.png",
+        "screenshot.png",
+        "social.png"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 10,
+      "lastAccessed": 1776317668695,
+      "keyFiles": [
+        "augment.d.ts",
+        "base.ts",
+        "filesystem.ts",
+        "format-importer.ts",
+        "main.ts"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1776317668701,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1776318177812,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1776318181341,
+      "type": "file"
+    },
+    {
+      "path": "manifest.json",
+      "accessCount": 1,
+      "lastAccessed": 1776318182194,
+      "type": "file"
+    },
+    {
+      "path": "src/filesystem.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776318182286,
+      "type": "file"
+    },
+    {
+      "path": "src/main.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776318185463,
+      "type": "file"
+    },
+    {
+      "path": "src/format-importer.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776318185982,
+      "type": "file"
+    },
+    {
+      "path": "src/base.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776318186417,
+      "type": "file"
+    },
+    {
+      "path": "src/util.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776318186940,
+      "type": "file"
+    },
+    {
+      "path": "src/formats/apple-notes.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776325410361,
+      "type": "file"
+    },
+    {
+      "path": "src/formats/notion.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776325410411,
+      "type": "file"
+    },
+    {
+      "path": "src/formats/notion-api.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776325410622,
+      "type": "file"
+    },
+    {
+      "path": "src/zip.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776325416046,
+      "type": "file"
+    },
+    {
+      "path": "src/formats/evernote-enex.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776325416948,
+      "type": "file"
+    },
+    {
+      "path": "src/formats/apple-notes/convert-note.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776325417221,
+      "type": "file"
+    },
+    {
+      "path": "src/formats/onenote.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776325417823,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
