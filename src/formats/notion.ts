@@ -9,7 +9,7 @@ import { readToMarkdown } from './notion/convert-to-md';
 import { NotionResolverInfo } from './notion/notion-types';
 import { getNotionId } from './notion/notion-utils';
 import { parseFileInfo } from './notion/parse-info';
-import { consolidateImages } from './notion/consolidate-images';
+import { consolidateImages } from './notion/notion-consolidate';
 
 export class NotionImporter extends FormatImporter {
 
