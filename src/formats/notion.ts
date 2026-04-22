@@ -21,7 +21,29 @@ export class NotionImporter extends FormatImporter {
 	init() {
 		this.parentsInSubfolders = true;
 		this.addFileChooserSetting('Exported Notion', ['zip']);
-		this.addOutputLocationSetting('(Select vault root)');
+
+		// Folder dropdown: vault root + all existing folders (recursive)
+		this.outputLocation = '/';
+		const folders: Record<string, string> = { '/': 'Vault Root (/)' };
+		const collectFolders = (parent: any) => {
+			for (const child of parent.children) {
+				if (child.children !== undefined && !child.name.startsWith('.')) {
+					folders[child.path] = child.path;
+					collectFolders(child);
+				}
+			}
+		};
+		collectFolders(this.vault.getRoot());
+		new Setting(this.modal.contentEl)
+			.setName('Output folder')
+			.setDesc('Choose where to import the notes.')
+			.addDropdown((dropdown) => dropdown
+				.addOptions(folders)
+				.setValue('/')
+				.onChange((value) => {
+					this.outputLocation = value;
+				}));
+
 		new Setting(this.modal.contentEl)
 			.setName('Save parent pages in subfolders')
 			.setDesc('Places the parent database pages in the same folder as the nested content.')
@@ -46,6 +68,13 @@ export class NotionImporter extends FormatImporter {
 				.onChange((value) => {
 					this.consolidateImages = value;
 				}));
+	}
+
+	async getOutputFolder() {
+		if (!this.outputLocation || this.outputLocation === '/') {
+			return this.app.vault.getRoot();
+		}
+		return super.getOutputFolder();
 	}
 
 	async import(ctx: ImportContext): Promise<void> {

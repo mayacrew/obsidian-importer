@@ -1,24 +1,18 @@
 /**
  * Post-import image consolidation.
  *
- * After HTML→MD import, scans for local image wiki-embeds and
- * consolidates them into a dedicated "Images" folder:
- *   ![[image.png]]        → ![image](../Images/image.png)
- *   ![[image.png|120]]    → <img src="../Images/image.png" width="120" />
+ * Move ALL image files under targetFolder to a single "Images" folder
+ * and rewrite markdown links to point to it.
  */
 
-import { Vault, TFile } from 'obsidian';
+import { Vault, TFile, TFolder } from 'obsidian';
 import { ImportContext } from '../../main';
 
-const IMAGE_EXTS_RE = /\.(png|jpg|jpeg|gif|webp|heic|svg|bmp)$/i;
-
-/** Matches ![[filename.ext]] and ![[filename.ext|width]] */
-const EMBED_RE =
-	/!\[\[([^\]|]+\.(?:png|jpg|jpeg|gif|webp|heic|svg|bmp))(?:\|(\d+))?\]\]/gi;
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'svg', 'bmp']);
 
 /**
- * Post-import step: scan MD files, consolidate images into
- * "Images" folder, and rewrite wiki-embed links.
+ * Post-import step: collect all images from targetFolder subtree,
+ * move them to "Images" folder, and rewrite all markdown links.
  */
 export async function consolidateImages(
 	vault: Vault,
@@ -30,25 +24,63 @@ export async function consolidateImages(
 	let consolidated = 0;
 	let skipped = 0;
 
-	// Ensure images folder exists
+	// Ensure Images folder exists
 	const imagesFolder = vault.getAbstractFileByPath(imagesFolderPath);
 	if (!imagesFolder) {
 		await vault.createFolder(imagesFolderPath);
 	}
 
-	const mdFiles = vault.getFiles().filter(
-		(f) => f.extension === 'md' && f.path.startsWith(targetFolderPath)
-	);
+	// Collect all image files under targetFolder
+	const imageFiles: TFile[] = [];
+	const allFiles = vault.getFiles();
+	for (const file of allFiles) {
+		if (file.path.startsWith(targetFolderPath)) {
+			const ext = file.extension.toLowerCase();
+			if (IMAGE_EXTS.has(ext)) {
+				imageFiles.push(file);
+			}
+		}
+	}
 
-	const total = mdFiles.length;
-	let current = 0;
+	// Move images to Images folder
+	const imageMap = new Map<string, string>(); // oldPath → newPath
 
+	for (const imgFile of imageFiles) {
+		if (ctx.isCancelled()) break;
+
+		ctx.status(`Moving images: ${imgFile.name}`);
+
+		try {
+			const destPath = `${imagesFolderPath}/${imgFile.basename}`;
+
+			// Check if already exists
+			if (!(await vault.adapter.exists(destPath))) {
+				const data = await vault.readBinary(imgFile);
+				await vault.createBinary(destPath, data);
+			}
+
+			// Track the mapping
+			imageMap.set(imgFile.path, destPath);
+
+			// Delete original
+			try {
+				await vault.delete(imgFile);
+			} catch {
+				// Silently ignore
+			}
+
+			consolidated++;
+		} catch {
+			skipped++;
+		}
+	}
+
+	// Update all markdown files with new image paths
+	const mdFiles = vault.getFiles().filter((f) => f.extension === 'md');
 	for (const md of mdFiles) {
 		if (ctx.isCancelled()) break;
 
-		current++;
-		ctx.status(`Consolidating images (${current}/${total}): ${md.name}`);
-		ctx.reportProgress(current, total);
+		ctx.status(`Updating links: ${md.name}`);
 
 		let text: string;
 		try {
@@ -57,79 +89,49 @@ export async function consolidateImages(
 			continue;
 		}
 
-		if (!EMBED_RE.test(text)) continue;
-		EMBED_RE.lastIndex = 0;
-
-		type Match = { full: string; filename: string; width?: string };
-		const matches: Match[] = [];
-		let m: RegExpExecArray | null;
-		while ((m = EMBED_RE.exec(text)) !== null) {
-			matches.push({ full: m[0], filename: m[1], width: m[2] });
-		}
-		if (matches.length === 0) continue;
-
-		let newText = text;
 		let modified = false;
 
-		for (const { full, filename, width } of matches) {
-			// Try multiple locations for the image
-			const mdDir = md.parent?.path ?? '';
-			const possiblePaths = [
-				`${mdDir}/${filename}`,
-				attachmentFolderPath ? `${attachmentFolderPath}/${filename}` : null,
-				filename,
-			].filter(Boolean) as string[];
+		// Replace wiki-embed links: ![[old-path/image.png]] → ![](../Images/image.png)
+		// Match both ![[path/image.ext]] and ![[path/image.ext|width]]
+		const wikiEmbedRegex = /!\[\[([^\]|]+\.(?:png|jpg|jpeg|gif|webp|heic|svg|bmp))(?:\|(\d+))?\]\]/gi;
+		text = text.replace(wikiEmbedRegex, (match, path, width) => {
+			// Find which image this refers to
+			for (const [oldPath, newPath] of imageMap) {
+				if (oldPath.endsWith(path) || oldPath.endsWith('/' + path)) {
+					const filename = newPath.split('/').pop()!;
+					const mdDirDepth = (md.parent?.path?.match(/\//g) || []).length;
+					const upDirs = '../'.repeat(mdDirDepth + 1);
+					const altText = filename.replace(/\.[^.]+$/, '');
+					const relPath = `${upDirs}Images/${filename}`;
 
-			let srcFile: TFile | null = null;
-			for (const path of possiblePaths) {
-				const file = vault.getAbstractFileByPath(path);
-				if (file && file instanceof TFile) {
-					srcFile = file;
-					break;
+					modified = true;
+					return width
+						? `<img src="${relPath}" width="${width}" />`
+						: `![${altText}](${relPath})`;
 				}
 			}
+			return match;
+		});
 
-			if (!srcFile) {
-				skipped++;
-				continue;
-			}
+		// Replace markdown links: ![alt](path/image.png) → ![alt](../Images/image.png)
+		const mdLinkRegex = /!\[([^\]]*)\]\(([^)]+\.(?:png|jpg|jpeg|gif|webp|heic|svg|bmp))\)/gi;
+		text = text.replace(mdLinkRegex, (match, alt, path) => {
+			for (const [oldPath, newPath] of imageMap) {
+				if (oldPath.endsWith(path) || oldPath.endsWith('/' + path)) {
+					const filename = newPath.split('/').pop()!;
+					const mdDirDepth = (md.parent?.path?.match(/\//g) || []).length;
+					const upDirs = '../'.repeat(mdDirDepth + 1);
+					const relPath = `${upDirs}Images/${filename}`;
 
-			try {
-				const data = await vault.readBinary(srcFile);
-				const destPath = `${imagesFolderPath}/${filename}`;
-
-				// Check if already exists
-				if (!(await vault.adapter.exists(destPath))) {
-					await vault.createBinary(destPath, data);
+					modified = true;
+					return `![${alt}](${relPath})`;
 				}
-
-				// Delete original file after copying
-				try {
-					await vault.delete(srcFile);
-				} catch {
-					// Silently ignore delete errors
-				}
-
-				consolidated++;
-
-				// Rewrite embed - compute relative path from MD's directory to Images
-				const mdDirDepth = (mdDir.match(/\//g) || []).length;
-				const upDirs = '../'.repeat(mdDirDepth + 1);
-				const altText = filename.replace(/\.[^.]+$/, '');
-				const relPath = `${upDirs}Images/${filename}`;
-				const replacement = width
-					? `<img src="${relPath}" width="${width}" />`
-					: `![${altText}](${relPath})`;
-
-				newText = newText.replace(full, replacement);
-				modified = true;
-			} catch {
-				skipped++;
 			}
-		}
+			return match;
+		});
 
 		if (modified) {
-			await vault.modify(md, newText);
+			await vault.modify(md, text);
 		}
 	}
 
