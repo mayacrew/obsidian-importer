@@ -11,8 +11,10 @@ import { getNotionId } from './notion/notion-utils';
 import { parseFileInfo } from './notion/parse-info';
 import { consolidateImages } from './notion/notion-consolidate';
 
-export class NotionImporter extends FormatImporter {
+const VAULT_ROOT_PATH = '/';
+const VAULT_ROOT_LABEL = 'Vault Root (/)';
 
+export class NotionImporter extends FormatImporter {
 
 	parentsInSubfolders: boolean;
 	singleLineBreaks: boolean;
@@ -21,53 +23,62 @@ export class NotionImporter extends FormatImporter {
 	init() {
 		this.parentsInSubfolders = true;
 		this.addFileChooserSetting('Exported Notion', ['zip']);
+		this.addOutputFolderDropdown();
+		this.addToggleSetting(
+			'Save parent pages in subfolders',
+			'Places the parent database pages in the same folder as the nested content.',
+			this.parentsInSubfolders,
+			(v) => (this.parentsInSubfolders = v),
+		);
+		this.addToggleSetting(
+			'Single line breaks',
+			'Separate Notion blocks with only one line break (default is 2).',
+			this.singleLineBreaks,
+			(v) => (this.singleLineBreaks = v),
+		);
+		this.addToggleSetting(
+			'Consolidate images locally',
+			'After import, move all images to an "Images" folder.',
+			this.consolidateImages,
+			(v) => (this.consolidateImages = v),
+		);
+	}
 
-		// Folder dropdown: vault root + all existing folders (recursive)
-		this.outputLocation = '/';
-		const folders: Record<string, string> = { '/': 'Vault Root (/)' };
-		const collectFolders = (parent: any) => {
-			for (const child of parent.children) {
-				if (child.children !== undefined && !child.name.startsWith('.')) {
-					folders[child.path] = child.path;
-					collectFolders(child);
-				}
-			}
-		};
-		collectFolders(this.vault.getRoot());
+	/** Build a dropdown of vault folders (root + all subfolders, excluding hidden). */
+	private addOutputFolderDropdown() {
+		this.outputLocation = VAULT_ROOT_PATH;
+		const folders: Record<string, string> = { [VAULT_ROOT_PATH]: VAULT_ROOT_LABEL };
+		this.collectVaultFolders(this.vault.getRoot(), folders);
+
 		new Setting(this.modal.contentEl)
 			.setName('Output folder')
 			.setDesc('Choose where to import the notes.')
 			.addDropdown((dropdown) => dropdown
 				.addOptions(folders)
-				.setValue('/')
+				.setValue(VAULT_ROOT_PATH)
 				.onChange((value) => {
 					this.outputLocation = value;
 				}));
+	}
 
-		new Setting(this.modal.contentEl)
-			.setName('Save parent pages in subfolders')
-			.setDesc('Places the parent database pages in the same folder as the nested content.')
-			.addToggle((toggle) => toggle
-				.setValue(this.parentsInSubfolders)
-				.onChange((value) => (this.parentsInSubfolders = value)));
+	/** Recursively collect all non-hidden folder paths into the folders map. */
+	private collectVaultFolders(parent: any, folders: Record<string, string>) {
+		for (const child of parent.children) {
+			if (child.children !== undefined && !child.name.startsWith('.')) {
+				folders[child.path] = child.path;
+				this.collectVaultFolders(child, folders);
+			}
+		}
+	}
 
+	/** Add a toggle setting with consistent wiring. */
+	private addToggleSetting(name: string, desc: string, initial: boolean, onChange: (value: boolean) => void) {
 		new Setting(this.modal.contentEl)
-			.setName('Single line breaks')
-			.setDesc('Separate Notion blocks with only one line break (default is 2).')
+			.setName(name)
+			.setDesc(desc)
 			.addToggle((toggle) => toggle
-				.setValue(this.singleLineBreaks)
-				.onChange((value) => {
-					this.singleLineBreaks = value;
-				}));
-
-		new Setting(this.modal.contentEl)
-			.setName('Consolidate images locally')
-			.setDesc('After import, move all images to an "Images" folder.')
-			.addToggle((toggle) => toggle
-				.setValue(this.consolidateImages)
-				.onChange((value) => {
-					this.consolidateImages = value;
-				}));
+				.setValue(initial)
+				.onChange(onChange));
 	}
 
 	async getOutputFolder() {
