@@ -2,9 +2,9 @@
  * Post-import image consolidation.
  *
  * After HTML→MD import, scans for local image wiki-embeds and
- * consolidates them into a dedicated "notion-images" folder:
- *   ![[image.png]]        → ![image](../notion-images/image.png)
- *   ![[image.png|120]]    → <img src="../notion-images/image.png" width="120" />
+ * consolidates them into a dedicated "Images" folder:
+ *   ![[image.png]]        → ![image](../Images/image.png)
+ *   ![[image.png|120]]    → <img src="../Images/image.png" width="120" />
  */
 
 import { Vault, TFile } from 'obsidian';
@@ -18,7 +18,7 @@ const EMBED_RE =
 
 /**
  * Post-import step: scan MD files, consolidate images into
- * "notion-images" folder, and rewrite wiki-embed links.
+ * "Images" folder, and rewrite wiki-embed links.
  */
 export async function consolidateImages(
 	vault: Vault,
@@ -26,7 +26,7 @@ export async function consolidateImages(
 	targetFolderPath: string,
 	attachmentFolderPath: string,
 ): Promise<{ consolidated: number; skipped: number }> {
-	const imagesFolderPath = 'notion-images';
+	const imagesFolderPath = 'Images';
 	let consolidated = 0;
 	let skipped = 0;
 
@@ -102,13 +102,21 @@ export async function consolidateImages(
 				if (!(await vault.adapter.exists(destPath))) {
 					await vault.createBinary(destPath, data);
 				}
+
+				// Delete original file after copying
+				try {
+					await vault.delete(srcFile);
+				} catch {
+					// Silently ignore delete errors
+				}
+
 				consolidated++;
 
-				// Rewrite embed - compute relative path from MD's directory to notion-images
+				// Rewrite embed - compute relative path from MD's directory to Images
 				const mdDirDepth = (mdDir.match(/\//g) || []).length;
 				const upDirs = '../'.repeat(mdDirDepth + 1);
 				const altText = filename.replace(/\.[^.]+$/, '');
-				const relPath = `${upDirs}notion-images/${filename}`;
+				const relPath = `${upDirs}Images/${filename}`;
 				const replacement = width
 					? `<img src="${relPath}" width="${width}" />`
 					: `![${altText}](${relPath})`;
