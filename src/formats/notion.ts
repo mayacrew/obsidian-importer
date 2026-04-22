@@ -21,7 +21,7 @@ export class NotionImporter extends FormatImporter {
 	init() {
 		this.parentsInSubfolders = true;
 		this.addFileChooserSetting('Exported Notion', ['zip']);
-		this.addOutputLocationSetting('Notion');
+		this.addOutputLocationSetting('(Select vault root)');
 		new Setting(this.modal.contentEl)
 			.setName('Save parent pages in subfolders')
 			.setDesc('Places the parent database pages in the same folder as the nested content.')
@@ -40,7 +40,7 @@ export class NotionImporter extends FormatImporter {
 
 		new Setting(this.modal.contentEl)
 			.setName('Consolidate images locally')
-			.setDesc('After import, move all images to a "notion-images" folder.')
+			.setDesc('After import, move all images to an "Images" folder.')
 			.addToggle((toggle) => toggle
 				.setValue(this.consolidateImages)
 				.onChange((value) => {
@@ -66,7 +66,8 @@ export class NotionImporter extends FormatImporter {
 		// As a convention, all parent folders should end with "/" in this importer.
 		if (!targetFolderPath?.endsWith('/')) targetFolderPath += '/';
 
-		const info = new NotionResolverInfo(vault.getConfig('attachmentFolderPath') ?? '', this.singleLineBreaks);
+		// Force Images folder for consolidated image storage
+		const info = new NotionResolverInfo('Images', this.singleLineBreaks);
 
 		// loads in only path & title information to objects
 		ctx.status('Looking for files to import');
@@ -159,7 +160,7 @@ export class NotionImporter extends FormatImporter {
 					ctx.status(`Importing attachment ${file.name}`);
 
 					const data = await file.read();
-					await vault.createBinary(`${attachmentInfo.targetParentFolder}${attachmentInfo.nameWithExtension}`, data);
+					await vault.createBinary(`Images/${attachmentInfo.nameWithExtension}`, data);
 					ctx.reportAttachmentSuccess(file.fullpath);
 				}
 			}
