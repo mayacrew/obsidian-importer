@@ -1,4 +1,4 @@
-import { normalizePath, Notice, Setting, DataWriteOptions } from 'obsidian';
+import { FileSystemAdapter, normalizePath, Notice, Setting, DataWriteOptions } from 'obsidian';
 import { PickedFile } from '../filesystem';
 import { FormatImporter } from '../format-importer';
 import { ImportContext } from '../main';
@@ -13,6 +13,9 @@ import { consolidateImages } from './notion/notion-consolidate';
 
 const VAULT_ROOT_PATH = '/';
 const VAULT_ROOT_LABEL = 'Vault Root (/)';
+
+// Attachments larger than this are streamed to disk instead of read into one ArrayBuffer.
+const LARGE_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 export class NotionImporter extends FormatImporter {
 
@@ -199,9 +202,25 @@ export class NotionImporter extends FormatImporter {
 
 					ctx.status(`Importing attachment ${file.name}`);
 
-					const data = await file.read();
-					await vault.createBinary(`Images/${attachmentInfo.nameWithExtension}`, data);
-					ctx.reportAttachmentSuccess(file.fullpath);
+					const path = normalizePath(`Images/${attachmentInfo.nameWithExtension}`);
+					// Notes reference attachments by this exact filename, so we can't rename
+					// duplicates without breaking links. Skip if already written instead of failing.
+					if (await vault.adapter.exists(path)) {
+						ctx.reportSkipped(file.fullpath, 'attachment already exists');
+					}
+					else {
+						const adapter = vault.adapter;
+						// Stream large attachments straight to disk to avoid loading the whole
+						// file into a single ArrayBuffer (memory blowup / ~2GB buffer limit).
+						if (adapter instanceof FileSystemAdapter && file.size > LARGE_ATTACHMENT_BYTES) {
+							await file.writeToFile(adapter.getFullPath(path));
+						}
+						else {
+							const data = await file.read();
+							await vault.createBinary(path, data);
+						}
+						ctx.reportAttachmentSuccess(file.fullpath);
+					}
 				}
 			}
 			catch (e) {

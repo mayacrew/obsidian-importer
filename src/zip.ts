@@ -50,7 +50,49 @@ export class ZipEntryFile implements PickedFile {
 	}
 
 	async readZip(callback: (zip: ZipReader<any>) => Promise<void>): Promise<void> {
-		return callback(new ZipReader(new BlobReader(new Blob([await this.read()]))));
+		// Stream the nested zip as a Blob instead of materializing it into a single
+		// ArrayBuffer. Notion wraps large exports as a zip-in-zip whose inner part can
+		// exceed the ~2GB single-ArrayBuffer limit; BlobReader reads it lazily by slice.
+		const blob = await this.entry.getData(new BlobWriter());
+		return callback(new ZipReader(new BlobReader(blob)));
+	}
+
+	/**
+	 * Stream this entry's contents straight to a file on disk (desktop only), inflating
+	 * chunk-by-chunk into a Node write stream. Avoids building a full-file ArrayBuffer,
+	 * so multi-hundred-MB / multi-GB attachments import without exhausting memory or
+	 * hitting the ~2GB single-buffer limit. `fullPath` must be an absolute filesystem path.
+	 */
+	async writeToFile(fullPath: string): Promise<void> {
+		const fs = require('fs');
+		const { dirname } = require('path');
+		await fs.promises.mkdir(dirname(fullPath), { recursive: true });
+
+		const nodeStream = fs.createWriteStream(fullPath);
+		const writable = new WritableStream<Uint8Array>({
+			write(chunk) {
+				return new Promise((resolve, reject) => {
+					nodeStream.write(Buffer.from(chunk), (err: any) => err ? reject(err) : resolve());
+				});
+			},
+			close() {
+				return new Promise((resolve, reject) => {
+					nodeStream.end((err: any) => err ? reject(err) : resolve());
+				});
+			},
+			abort() {
+				nodeStream.destroy();
+			},
+		});
+
+		try {
+			await this.entry.getData(writable);
+		}
+		catch (e) {
+			nodeStream.destroy();
+			await fs.promises.rm(fullPath, { force: true }).catch(() => {});
+			throw e;
+		}
 	}
 }
 
