@@ -275,8 +275,8 @@ async function processZips(ctx: ImportContext, files: PickedFile[], callback: (f
 						try {
 							await processZips(ctx, [entry], callback);
 						}
-						catch {
-							ctx.reportFailed(entry.fullpath);
+						catch (e) {
+							ctx.reportFailed(entry.fullpath, e);
 						}
 					}
 					else {
@@ -285,8 +285,8 @@ async function processZips(ctx: ImportContext, files: PickedFile[], callback: (f
 				}
 			});
 		}
-		catch {
-			ctx.reportFailed(zipFile.fullpath);
+		catch (e) {
+			ctx.reportFailed(zipFile.fullpath, e);
 		}
 	}
 }

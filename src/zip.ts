@@ -1,5 +1,6 @@
 import { BlobReader, BlobWriter, Entry, TextWriter, ZipReader } from '@zip.js/zip.js';
-import { parseFilePath, PickedFile } from './filesystem';
+import { Platform } from 'obsidian';
+import { NodePickedFile, parseFilePath, PickedFile } from './filesystem';
 
 interface FileEntry extends Entry {
 	directory: false;
@@ -50,9 +51,31 @@ export class ZipEntryFile implements PickedFile {
 	}
 
 	async readZip(callback: (zip: ZipReader<any>) => Promise<void>): Promise<void> {
-		// Stream the nested zip as a Blob instead of materializing it into a single
-		// ArrayBuffer. Notion wraps large exports as a zip-in-zip whose inner part can
-		// exceed the ~2GB single-ArrayBuffer limit; BlobReader reads it lazily by slice.
+		// Notion wraps large exports as a zip-in-zip whose inner part can exceed the
+		// ~2GB single-buffer limit. BlobWriter still materializes the whole inner zip in
+		// memory (a multi-GB part then fails to open, taking the whole import down), so on
+		// desktop we spill it to a temp file and read it back via fd streaming — the inner
+		// zip never has to live in memory all at once.
+		if (Platform.isDesktopApp) {
+			const fs = require('fs');
+			const os = require('os');
+			const nodePath = require('path');
+			const tmpPath = nodePath.join(os.tmpdir(), `obsidian-notion-${Date.now()}-${Math.floor(Math.random() * 1e9)}.zip`);
+			await this.writeToFile(tmpPath);
+			try {
+				const nested = new NodePickedFile(tmpPath);
+				// Preserve the logical path (outer.zip/inner.zip) for progress/error reporting.
+				(nested as { fullpath: string }).fullpath = this.fullpath;
+				await nested.readZip(callback);
+			}
+			finally {
+				await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+			}
+			return;
+		}
+
+		// Web fallback: no disk access, so stream the inner zip as an in-memory Blob.
+		// BlobReader reads it lazily by slice, avoiding the .arrayBuffer() 2GB conversion.
 		const blob = await this.entry.getData(new BlobWriter());
 		return callback(new ZipReader(new BlobReader(blob)));
 	}
